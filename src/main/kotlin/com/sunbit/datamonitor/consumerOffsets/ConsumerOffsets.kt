@@ -21,10 +21,11 @@ import java.util.*
 import java.util.concurrent.TimeUnit
 
 private const val INPUT_TOPIC = "__consumer_offsets"
+private const val SCHEMAS_TOPIC = "schemas"
 
 private val logger = KotlinLogging.logger {}
 
-class ConsumerOffsets(props: Properties, groupId: String) {
+class ConsumerOffsets(props: Properties, groupId: String, private val monitorSchemas: Boolean) {
     private val consumer = KafkaConsumer<ByteArray, ByteArray>(
         Properties().apply {
             putAll(props)
@@ -61,12 +62,14 @@ class ConsumerOffsets(props: Properties, groupId: String) {
     }
 
     private fun resetOffsets() {
-        logger.info { "Going to reset offsets for topic $INPUT_TOPIC" }
+        val topic = if (monitorSchemas) SCHEMAS_TOPIC else INPUT_TOPIC
 
-        val partitions = consumer.partitionsFor(INPUT_TOPIC)
+        logger.info { "Going to reset offsets for topic $topic"}
+
+        val partitions = consumer.partitionsFor(topic)
 
         val offsets = partitions.map {
-            TopicPartition(INPUT_TOPIC, it.partition()) to OffsetAndMetadata(0)
+            TopicPartition(topic, it.partition()) to OffsetAndMetadata(0)
         }.toMap()
 
         var attempts = 60
@@ -88,19 +91,29 @@ class ConsumerOffsets(props: Properties, groupId: String) {
     }
 
     fun setupStreams(builder: StreamsBuilder) {
-        builder.stream<ByteArray, ByteArray>(
-            INPUT_TOPIC,
-            Consumed.with(Serdes.ByteArray(), Serdes.ByteArray())
-        )
-            .filterNot { _, v -> v == null }
-            .map { k, v -> KeyValue.pair(baseKey(k), v) }
-            .filter { k, _ -> k is OffsetKey }
-            .map { k, v -> KeyValue.pair(k as OffsetKey, v) }
-            .filterNot { k, _ -> isInputTopic(k) }
-            .map { k, v -> toDetails(k, v) }
-            .peek { _, details ->
-                logger.info { "ConsumerOffsetDetails: $details" }
-            }
-    }
+        if (monitorSchemas) {
+            builder.stream<String, String>(
+                SCHEMAS_TOPIC,
+                Consumed.with(Serdes.String(), Serdes.String())
+            )
+                .peek { k, v ->
+                    logger.info { "Schema: $k => $v" }
+                }
+        } else {
+            builder.stream<ByteArray, ByteArray>(
+                INPUT_TOPIC,
+                Consumed.with(Serdes.ByteArray(), Serdes.ByteArray())
+            )
+                .filterNot { _, v -> v == null }
+                .map { k, v -> KeyValue.pair(baseKey(k), v) }
+                .filter { k, _ -> k is OffsetKey }
+                .map { k, v -> KeyValue.pair(k as OffsetKey, v) }
+                .filterNot { k, _ -> isInputTopic(k) }
+                .map { k, v -> toDetails(k, v) }
+                .peek { _, details ->
+                    logger.info { "ConsumerOffsetDetails: $details" }
+                }
 
+        }
+    }
 }

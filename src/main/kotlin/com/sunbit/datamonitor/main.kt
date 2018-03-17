@@ -17,8 +17,9 @@ fun main(args: Array<String>) {
         put(StreamsConfig.APPLICATION_ID_CONFIG, APP_NAME)
     }
 
+    val monitorSchemas = props.getProperty("monitor.schemas")?.toBoolean() ?: false
     val builder = StreamsBuilder()
-    val offsets = ConsumerOffsets(props, groupId=APP_NAME)
+    val offsets = ConsumerOffsets(props, groupId = APP_NAME, monitorSchemas=monitorSchemas)
     offsets.setupStreams(builder)
 
     val streams = KafkaStreams(builder.build(), props)
